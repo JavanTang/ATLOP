@@ -23,7 +23,8 @@ def read_docred(file_in, tokenizer, max_seq_length=1024):
         return None
     with open(file_in, "r") as fh:
         data = json.load(fh)
-
+    # 跑代码制取10个
+    data = data[:10]
     for sample in tqdm(data, desc="Example"):
         sents = []
         sent_map = []

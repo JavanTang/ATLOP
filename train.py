@@ -1,6 +1,6 @@
 import argparse
 import os
-
+import copy
 import numpy as np
 import torch
 from apex import amp
@@ -18,17 +18,25 @@ import wandb
 def train(args, model, train_features, dev_features, test_features):
     def finetune(features, optimizer, num_epoch, num_steps):
         best_score = -1
-        train_dataloader = DataLoader(features, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
+        train_dataloader = DataLoader(
+            features, batch_size=args.train_batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
         train_iterator = range(int(num_epoch))
-        total_steps = int(len(train_dataloader) * num_epoch // args.gradient_accumulation_steps)
+        total_steps = int(len(train_dataloader) * num_epoch //
+                          args.gradient_accumulation_steps)
         warmup_steps = int(total_steps * args.warmup_ratio)
-        scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer, num_warmup_steps=warmup_steps, num_training_steps=total_steps)
         print("Total steps: {}".format(total_steps))
         print("Warmup steps: {}".format(warmup_steps))
         for epoch in train_iterator:
             model.zero_grad()
             for step, batch in enumerate(train_dataloader):
                 model.train()
+                # 这里的input_ids是(batch, seq_len)
+                # attention_mask (batch, seq_len)
+                # labels (batch, relation class)
+                # hts (batch, relation class)
+                # entity_pos 这个有点没有搞明白
                 inputs = {'input_ids': batch[0].to(args.device),
                           'attention_mask': batch[1].to(args.device),
                           'labels': batch[2],
@@ -41,14 +49,16 @@ def train(args, model, train_features, dev_features, test_features):
                     scaled_loss.backward()
                 if step % args.gradient_accumulation_steps == 0:
                     if args.max_grad_norm > 0:
-                        torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+                        torch.nn.utils.clip_grad_norm_(
+                            amp.master_params(optimizer), args.max_grad_norm)
                     optimizer.step()
                     scheduler.step()
                     model.zero_grad()
                     num_steps += 1
                 wandb.log({"loss": loss.item()}, step=num_steps)
                 if (step + 1) == len(train_dataloader) - 1 or (args.evaluation_steps > 0 and num_steps % args.evaluation_steps == 0 and step % args.gradient_accumulation_steps == 0):
-                    dev_score, dev_output = evaluate(args, model, dev_features, tag="dev")
+                    dev_score, dev_output = evaluate(
+                        args, model, dev_features, tag="dev")
                     wandb.log(dev_output, step=num_steps)
                     print(dev_output)
                     if dev_score > best_score:
@@ -62,12 +72,16 @@ def train(args, model, train_features, dev_features, test_features):
 
     new_layer = ["extractor", "bilinear"]
     optimizer_grouped_parameters = [
-        {"params": [p for n, p in model.named_parameters() if not any(nd in n for nd in new_layer)], },
-        {"params": [p for n, p in model.named_parameters() if any(nd in n for nd in new_layer)], "lr": 1e-4},
+        {"params": [p for n, p in model.named_parameters(
+        ) if not any(nd in n for nd in new_layer)], },
+        {"params": [p for n, p in model.named_parameters() if any(
+            nd in n for nd in new_layer)], "lr": 1e-4},
     ]
 
-    optimizer = AdamW(optimizer_grouped_parameters, lr=args.learning_rate, eps=args.adam_epsilon)
-    model, optimizer = amp.initialize(model, optimizer, opt_level="O1", verbosity=0)
+    optimizer = AdamW(optimizer_grouped_parameters,
+                      lr=args.learning_rate, eps=args.adam_epsilon)
+    model, optimizer = amp.initialize(
+        model, optimizer, opt_level="O1", verbosity=0)
     num_steps = 0
     set_seed(args)
     model.zero_grad()
@@ -76,7 +90,8 @@ def train(args, model, train_features, dev_features, test_features):
 
 def evaluate(args, model, features, tag="dev"):
 
-    dataloader = DataLoader(features, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn, drop_last=False)
+    dataloader = DataLoader(features, batch_size=args.test_batch_size,
+                            shuffle=False, collate_fn=collate_fn, drop_last=False)
     preds = []
     for batch in dataloader:
         model.eval()
@@ -106,7 +121,8 @@ def evaluate(args, model, features, tag="dev"):
 
 def report(args, model, features):
 
-    dataloader = DataLoader(features, batch_size=args.test_batch_size, shuffle=False, collate_fn=collate_fn, drop_last=False)
+    dataloader = DataLoader(features, batch_size=args.test_batch_size,
+                            shuffle=False, collate_fn=collate_fn, drop_last=False)
     preds = []
     for batch in dataloader:
         model.eval()
@@ -133,9 +149,11 @@ def main():
 
     parser.add_argument("--data_dir", default="./dataset/docred", type=str)
     parser.add_argument("--transformer_type", default="bert", type=str)
-    parser.add_argument("--model_name_or_path", default="bert-base-cased", type=str)
-
-    parser.add_argument("--train_file", default="train_annotated.json", type=str)
+    parser.add_argument("--model_name_or_path",
+                        default="./bert_base_cased/", type=str)
+    # dataset/docred/readme.md 里面有基本的数据格式
+    parser.add_argument(
+        "--train_file", default="train_annotated.json", type=str)
     parser.add_argument("--dev_file", default="dev.json", type=str)
     parser.add_argument("--test_file", default="test.json", type=str)
     parser.add_argument("--save_path", default="", type=str)
@@ -175,18 +193,18 @@ def main():
                         help="Number of relation types in dataset.")
 
     args = parser.parse_args()
-    wandb.init(project="DocRED")
+    wandb.init(project="DocRED", entity='tangzf')
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     args.n_gpu = torch.cuda.device_count()
     args.device = device
 
     config = AutoConfig.from_pretrained(
-        args.config_name if args.config_name else args.model_name_or_path,
+        "/home/tangzhifeng/code/ATLOP/bert_base_cased",
         num_labels=args.num_class,
     )
     tokenizer = AutoTokenizer.from_pretrained(
-        args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
+        "/home/tangzhifeng/code/ATLOP/bert_base_cased",
     )
 
     read = read_docred
@@ -194,13 +212,17 @@ def main():
     train_file = os.path.join(args.data_dir, args.train_file)
     dev_file = os.path.join(args.data_dir, args.dev_file)
     test_file = os.path.join(args.data_dir, args.test_file)
-    train_features = read(train_file, tokenizer, max_seq_length=args.max_seq_length)
-    dev_features = read(dev_file, tokenizer, max_seq_length=args.max_seq_length)
-    test_features = read(test_file, tokenizer, max_seq_length=args.max_seq_length)
+
+    train_features = read(train_file, tokenizer,
+                          max_seq_length=args.max_seq_length)
+    dev_features = read(dev_file, tokenizer,
+                        max_seq_length=args.max_seq_length)
+    test_features = read(test_file, tokenizer,
+                         max_seq_length=args.max_seq_length)
 
     model = AutoModel.from_pretrained(
-        args.model_name_or_path,
-        from_tf=bool(".ckpt" in args.model_name_or_path),
+        '/home/tangzhifeng/code/ATLOP/bert_base_cased',
+        # from_tf=bool(".ckpt" in args.model_name_or_path),
         config=config,
     )
 

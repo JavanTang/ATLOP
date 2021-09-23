@@ -8,15 +8,18 @@ class ATLoss(nn.Module):
         super().__init__()
 
     def forward(self, logits, labels):
+        # logits线性回归的结果,labels是真实值
+
         # TH label
         th_label = torch.zeros_like(labels, dtype=torch.float).to(labels)
         th_label[:, 0] = 1.0
         labels[:, 0] = 0.0
 
-        p_mask = labels + th_label
-        n_mask = 1 - labels
+        p_mask = labels + th_label  # 正样本
+        n_mask = 1 - labels  # 负样本
 
         # Rank positive classes to TH
+        logits[0.123, 0.123]
         logit1 = logits - (1 - p_mask) * 1e30
         loss1 = -(F.log_softmax(logit1, dim=-1) * labels).sum(1)
 
@@ -30,13 +33,24 @@ class ATLoss(nn.Module):
         return loss
 
     def get_label(self, logits, num_labels=-1):
+        # 0位置就是用来学习阈值
         th_logit = logits[:, 0].unsqueeze(1)
         output = torch.zeros_like(logits).to(logits)
         mask = (logits > th_logit)
         if num_labels > 0:
             top_v, _ = torch.topk(logits, num_labels, dim=1)
-            top_v = top_v[:, -1]
-            mask = (logits >= top_v.unsqueeze(1)) & mask
+            top_v = top_v[:, -1]    # 这个最小
+        """
+            >>> a = torch.tensor([1,0,1,0])
+            >>> b = torch.tensor([1,0,1,0])
+            >>> a & b
+            tensor([1, 0, 1, 0])
+            >>> b = torch.tensor([0,0,1,1])
+            >>> a & b
+            tensor([0, 0, 1, 0])
+        """
+        # unsqueeze 增加一个维度
+        mask = (logits >= top_v.unsqueeze(1)) & mask
         output[mask] = 1.0
         output[:, 0] = (output.sum(1) == 0.).to(logits)
         return output

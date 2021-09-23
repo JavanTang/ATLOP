@@ -1,3 +1,8 @@
 
 *.json
 *.pyc
+
+wandb
+bert_base_cased
+dataset/docred/ref/train_annotated.fact
+dataset/docred/ref/train_distant.fact
